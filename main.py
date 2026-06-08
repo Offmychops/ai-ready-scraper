@@ -1,8 +1,18 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import trafilatura
 
 app = FastAPI(title="AI-Ready Scraper API")
+
+# NEW: Tell the API to accept requests from absolutely anywhere (like your local browser)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (POST, GET, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
 
 class ScrapeRequest(BaseModel):
     url: str
@@ -15,7 +25,6 @@ async def scrape_url(data: ScrapeRequest):
     and converts the core content into clean Markdown.
     """
     try:
-        # 1. Fetch the raw HTML from the target web address
         downloaded = trafilatura.fetch_url(data.url)
         
         if downloaded is None:
@@ -24,16 +33,14 @@ async def scrape_url(data: ScrapeRequest):
                 detail="Could not fetch data from URL. Make sure it is valid and public."
             )
         
-        # NEW: Extract the main featured/lead image URL of the article
         metadata = trafilatura.extract_metadata(downloaded)
         main_image_url = metadata.image if metadata else None
 
-        # 2. Extract the main body text and convert to clean markdown
         markdown_result = trafilatura.extract(
             downloaded, 
             output_format="markdown",
             include_links=data.include_links,
-            include_images=False  # Keeps the main body text clean of inline junk images
+            include_images=False
         )
         
         if not markdown_result:
@@ -45,7 +52,7 @@ async def scrape_url(data: ScrapeRequest):
         return {
             "success": True,
             "target_url": data.url,
-            "main_image": main_image_url,  # NEW: Drops the main picture link right here
+            "main_image": main_image_url,
             "content": markdown_result
         }
         
