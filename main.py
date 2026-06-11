@@ -2,39 +2,55 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import trafilatura
+import re
 
 app = FastAPI(title="AI-Ready Scraper API")
 
-# NEW: Tell the API to accept requests from absolutely anywhere (like your local browser)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (POST, GET, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class ScrapeRequest(BaseModel):
     url: str
     include_links: bool = True
 
+def find_video_url(html_content: str) -> str:
+    """
+    Scans raw HTML for YouTube links, embeds, or standard video tags.
+    """
+    if not html_content:
+        return None
+    
+    # Check for standard YouTube watch or embed links
+    yt_match = re.search(r'(https?://(?:www\.)?(?:youtube\.com|youtu\.be)/(?:watch\?v=|embed/)[a-zA-Z0-9_-]+)', html_content)
+    if yt_match:
+        return yt_match.group(1)
+        
+    # Fallback to general video source or iframe links if present
+    video_match = re.search(r'src="(https?://[^"]+\.(?:mp4|webm))"', html_content)
+    if video_match:
+        return video_match.group(1)
+        
+    return None
+
 @app.post("/scrape")
 async def scrape_url(data: ScrapeRequest):
-    """
-    Fetches a web page, extracts the main image URL, strips layout junk,
-    and converts the core content into clean Markdown.
-    """
     try:
         downloaded = trafilatura.fetch_url(data.url)
         
         if downloaded is None:
-            raise HTTPException(
-                status_code=400, 
-                detail="Could not fetch data from URL. Make sure it is valid and public."
-            )
+            raise HTTPException(status_code=400, detail="Could not fetch data from URL.")
         
+        # Pull metadata for the main article image
         metadata = trafilatura.extract_metadata(downloaded)
         main_image_url = metadata.image if metadata else None
+
+        # Scan for any video links hidden in the page
+        video_url = find_video_url(downloaded)
 
         markdown_result = trafilatura.extract(
             downloaded, 
@@ -44,15 +60,13 @@ async def scrape_url(data: ScrapeRequest):
         )
         
         if not markdown_result:
-            raise HTTPException(
-                status_code=422, 
-                detail="Failed to extract readable article text from this page structure."
-            )
+            raise HTTPException(status_code=422, detail="Failed to extract readable text.")
             
         return {
             "success": True,
             "target_url": data.url,
             "main_image": main_image_url,
+            "video_url": video_url,  # NEW: Drops the video link right here
             "content": markdown_result
         }
         
